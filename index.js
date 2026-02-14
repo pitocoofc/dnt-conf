@@ -6,39 +6,34 @@ const {
 
 module.exports = {
     name: "NDJ Control Center",
-    description: "Painel administrativo estável para Termux",
+    description: "Controle de comandos de texto e status",
     init: (bot) => {
-        // Inicializa os armazenamentos se não existirem
         bot.disabledCommands = bot.disabledCommands || new Set();
         bot.tempCommands = bot.tempCommands || new Map();
+        const prefix = "!"; // Defina o prefixo para os comandos temporários aqui
 
         bot.command({
             name: 'admin',
-            description: 'Abre o Painel de Controle Administrativo',
+            description: 'Painel Administrativo NDJ',
             run: async (ctx) => {
-                // Filtro de Segurança (Dono do Bot)
                 if (ctx.interaction.user.id !== bot.config?.ownerId) {
-                    return ctx.reply({ 
-                        content: "❌ Acesso restrito ao desenvolvedor oficial.", 
-                        flags: [MessageFlags.Ephemeral] 
-                    });
+                    return ctx.reply({ content: "❌ Acesso negado.", flags: [MessageFlags.Ephemeral] });
                 }
 
                 const renderPanel = () => {
                     const embed = new EmbedBuilder()
-                        .setTitle('⚙️ NDJ-Lib | Control Center')
-                        .setDescription('Gerencie as funções do bot em tempo real.')
+                        .setTitle('⚙️ NDJ Control | Gestão de Texto')
+                        .setDescription(`Comandos de texto ativos: \`${bot.tempCommands.size}\``)
                         .addFields(
-                            { name: '📡 Status', value: `\`${bot.client.user.presence.status.toUpperCase()}\``, inline: true },
-                            { name: '🚫 Cmds Off', value: `\`${bot.disabledCommands.size}\``, inline: true },
-                            { name: '✉️ Msgs Temp', value: `\`${bot.tempCommands.size}\``, inline: true }
+                            { name: '📡 Status', value: `\`${bot.client.user.presence.status}\``, inline: true },
+                            { name: '⌨️ Prefixo', value: `\`${prefix}\``, inline: true }
                         )
                         .setColor('#2b2d31');
 
                     const row = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder().setCustomId('adm_status').setLabel('Status').setStyle(ButtonStyle.Primary).setEmoji('🌙'),
-                        new ButtonBuilder().setCustomId('adm_cmds').setLabel('Desativar').setStyle(ButtonStyle.Danger).setEmoji('🚫'),
-                        new ButtonBuilder().setCustomId('adm_temp').setLabel('Msg Temporária').setStyle(ButtonStyle.Success).setEmoji('➕')
+                        new ButtonBuilder().setCustomId('adm_temp_add').setLabel('Criar Texto').setStyle(ButtonStyle.Success).setEmoji('➕'),
+                        new ButtonBuilder().setCustomId('adm_temp_del').setLabel('Apagar Texto').setStyle(ButtonStyle.Danger).setEmoji('🗑️'),
+                        new ButtonBuilder().setCustomId('adm_status').setLabel('Status').setStyle(ButtonStyle.Primary)
                     );
 
                     return { embeds: [embed], components: [row], flags: [MessageFlags.Ephemeral] };
@@ -48,102 +43,70 @@ module.exports = {
                 const collector = msg.createMessageComponentCollector({ time: 300000 });
 
                 collector.on('collect', async (i) => {
-                    // --- MUDAR STATUS ---
-                    if (i.customId === 'adm_status') {
-                        const states = ['online', 'idle', 'dnd'];
-                        const current = i.client.user.presence.status;
-                        const next = states[(states.indexOf(current) + 1) % states.length];
-                        i.client.user.setPresence({ status: next });
-                        await i.update(renderPanel());
-                    }
-
-                    // --- GERENCIAR COMANDOS (Com filtro de erro) ---
-                    if (i.customId === 'adm_cmds') {
-                        // O filtro abaixo evita o erro de "Expected String Primitive"
-                        const options = Array.from(bot.commands.values())
-                            .filter(cmd => cmd && (cmd.name || cmd.data?.name)) 
-                            .slice(0, 25)
-                            .map(cmd => {
-                                const cmdName = cmd.name || cmd.data.name;
-                                return {
-                                    label: String(cmdName),
-                                    value: String(cmdName),
-                                    description: bot.disabledCommands.has(cmdName) ? "Atualmente: DESATIVADO" : "Atualmente: ATIVO",
-                                    emoji: bot.disabledCommands.has(cmdName) ? '❌' : '✅'
-                                };
-                            });
-
-                        if (options.length === 0) {
-                            return i.reply({ content: "⚠️ Nenhum comando encontrado.", flags: [MessageFlags.Ephemeral] });
-                        }
-
-                        const menuRow = new ActionRowBuilder().addComponents(
-                            new StringSelectMenuBuilder()
-                                .setCustomId('select_disable')
-                                .setPlaceholder('Selecione um comando para alternar')
-                                .addOptions(options)
-                        );
-
-                        await i.reply({ content: "Escolha o comando para mudar o estado:", components: [menuRow], flags: [MessageFlags.Ephemeral] });
-                    }
-
-                    // --- MENSAGEM TEMPORÁRIA (Modal) ---
-                    if (i.customId === 'adm_temp') {
-                        const modal = new ModalBuilder()
-                            .setCustomId('modal_temp_cmd')
-                            .setTitle('Criar Resposta Rápida');
-
-                        const nameInput = new TextInputBuilder()
-                            .setCustomId('temp_name')
-                            .setLabel("Nome do comando (Ex: aviso)")
-                            .setStyle(TextInputStyle.Short)
-                            .setRequired(true);
-
-                        const responseInput = new TextInputBuilder()
-                            .setCustomId('temp_text')
-                            .setLabel("Texto da resposta")
-                            .setStyle(TextInputStyle.Paragraph)
-                            .setRequired(true);
-
-                        modal.addComponents(
-                            new ActionRowBuilder().addComponents(nameInput), 
-                            new ActionRowBuilder().addComponents(responseInput)
-                        );
+                    // --- MODAL PARA CRIAR ---
+                    if (i.customId === 'adm_temp_add') {
+                        const modal = new ModalBuilder().setCustomId('modal_add_txt').setTitle('Novo Comando de Texto');
+                        const inputName = new TextInputBuilder().setCustomId('txt_name').setLabel("Gatilho (ex: regras)").setStyle(TextInputStyle.Short).setRequired(true);
+                        const inputContent = new TextInputBuilder().setCustomId('txt_val').setLabel("Resposta do Bot").setStyle(TextInputStyle.Paragraph).setRequired(true);
+                        
+                        modal.addComponents(new ActionRowBuilder().addComponents(inputName), new ActionRowBuilder().addComponents(inputContent));
                         await i.showModal(modal);
                     }
 
-                    // --- LÓGICA DO SELECT MENU ---
-                    if (i.customId === 'select_disable') {
-                        const name = i.values[0];
-                        if (bot.disabledCommands.has(name)) {
-                            bot.disabledCommands.delete(name);
-                            await i.update({ content: `✅ Comando \`${name}\` ATIVADO.`, components: [] });
-                        } else {
-                            bot.disabledCommands.add(name);
-                            await i.update({ content: `🚫 Comando \`${name}\` DESATIVADO.`, components: [] });
-                        }
+                    // --- MODAL PARA APAGAR ---
+                    if (i.customId === 'adm_temp_del') {
+                        const modal = new ModalBuilder().setCustomId('modal_del_txt').setTitle('Apagar Comando de Texto');
+                        const inputName = new TextInputBuilder().setCustomId('txt_del_name').setLabel("Nome do comando para apagar").setStyle(TextInputStyle.Short).setRequired(true);
+                        
+                        modal.addComponents(new ActionRowBuilder().addComponents(inputName));
+                        await i.showModal(modal);
+                    }
+
+                    // --- MUDAR STATUS ---
+                    if (i.customId === 'adm_status') {
+                        const states = ['online', 'idle', 'dnd'];
+                        const next = states[(states.indexOf(i.client.user.presence.status) + 1) % states.length];
+                        i.client.user.setPresence({ status: next });
+                        await i.update(renderPanel());
                     }
                 });
             }
         });
 
-        // Ouvinte global para Modals e Comandos Temporários
+        // --- OUVINTE DE INTERAÇÕES (MODALS) E MENSAGENS ---
         bot.client.on('interactionCreate', async (inter) => {
-            // Salvar via Modal
-            if (inter.isModalSubmit() && inter.customId === 'modal_temp_cmd') {
-                const name = inter.fields.getTextInputValue('temp_name').toLowerCase();
-                const text = inter.fields.getTextInputValue('temp_text');
-                bot.tempCommands.set(name, text);
-                await inter.reply({ content: `✅ Comando temporário \`/${name}\` pronto para uso!`, flags: [MessageFlags.Ephemeral] });
+            if (!inter.isModalSubmit()) return;
+
+            if (inter.customId === 'modal_add_txt') {
+                const name = inter.fields.getTextInputValue('txt_name').toLowerCase().replace(/\s/g, '');
+                const content = inter.fields.getTextInputValue('txt_val');
+                bot.tempCommands.set(name, content);
+                await inter.reply({ content: `✅ Comando \`${prefix}${name}\` criado!`, flags: [MessageFlags.Ephemeral] });
             }
 
-            // Responder Comando Temporário
-            if (inter.isChatInputCommand()) {
-                const response = bot.tempCommands.get(inter.commandName);
-                if (response) {
-                    return inter.reply({ content: response });
+            if (inter.customId === 'modal_del_txt') {
+                const name = inter.fields.getTextInputValue('txt_del_name').toLowerCase().replace(/\s/g, '');
+                if (bot.tempCommands.has(name)) {
+                    bot.tempCommands.delete(name);
+                    await inter.reply({ content: `🗑️ Comando \`${prefix}${name}\` removido.`, flags: [MessageFlags.Ephemeral] });
+                } else {
+                    await inter.reply({ content: `❌ O comando \`${prefix}${name}\` não foi encontrado.`, flags: [MessageFlags.Ephemeral] });
                 }
+            }
+        });
+
+        // --- OUVINTE DE MENSAGENS PARA OS COMANDOS DE TEXTO ---
+        bot.client.on('messageCreate', async (message) => {
+            if (message.author.bot || !message.content.startsWith(prefix)) return;
+
+            const args = message.content.slice(prefix.length).trim().split(/ +/);
+            const commandName = args.shift().toLowerCase();
+
+            const response = bot.tempCommands.get(commandName);
+            if (response) {
+                await message.reply(response);
             }
         });
     }
 };
+                
