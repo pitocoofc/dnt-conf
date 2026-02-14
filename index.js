@@ -1,20 +1,37 @@
 const { 
     ActionRowBuilder, ButtonBuilder, ButtonStyle, 
-    EmbedBuilder, ComponentType, MessageFlags, StringSelectMenuBuilder, PermissionFlagsBits 
+    EmbedBuilder, ComponentType, MessageFlags, 
+    StringSelectMenuBuilder, PermissionFlagsBits, Events 
 } = require('discord.js');
 
 module.exports = {
     name: "NDJ Control Center",
-    description: "Painel administrativo com gestão de comandos",
+    description: "Painel administrativo com trava de segurança integrada",
     init: (bot) => {
-        // Criamos um Set global no bot para comandos desativados (se não existir)
         bot.disabledCommands = bot.disabledCommands || new Set();
+        const client = bot.client || bot;
 
+        // Corrigindo o Deprecation e a Trava de Comandos
+        client.once(Events.ClientReady, () => {
+            client.on(Events.InteractionCreate, async (interaction) => {
+                if (!interaction.isChatInputCommand()) return;
+
+                if (bot.disabledCommands.has(interaction.commandName)) {
+                    // Impede a execução se estiver desativado
+                    return interaction.reply({ 
+                        content: "🚫 Este comando foi temporariamente desativado pelo administrador.", 
+                        flags: [MessageFlags.Ephemeral] 
+                    }).catch(() => null);
+                }
+            });
+            console.log("🛡️ [Security] Trava de comandos ativa e monitorando.");
+        });
+
+        // Comando Admin (O mesmo que já funcionou para você)
         bot.command({
             name: 'admin',
-            description: 'Abre o Painel de Controle Administrativo',
+            description: 'Painel de Controle',
             run: async (ctx) => {
-                // Filtro de Segurança Corrigido
                 const isOwner = ctx.interaction.user.id === bot.config?.ownerId;
                 const isAdmin = ctx.interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 
@@ -24,17 +41,13 @@ module.exports = {
 
                 const renderPanel = () => {
                     const embed = new EmbedBuilder()
-                        .setTitle('⚙️ NDJ-Lib | Painel de Controle')
-                        .setDescription('Gerencie os módulos e status do bot em tempo real.')
-                        .addFields(
-                            { name: 'Comandos Desativados', value: `${bot.disabledCommands.size}`, inline: true },
-                            { name: 'Total de Comandos', value: `${bot.commands?.size || 0}`, inline: true }
-                        )
+                        .setTitle('⚙️ NDJ-Lib | Painel')
+                        .setDescription(`Comandos desativados: **${bot.disabledCommands.size}**`)
                         .setColor('#5865F2');
 
                     const row = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder().setCustomId('btn_status').setLabel('Status').setStyle(ButtonStyle.Primary).setEmoji('🌙'),
-                        new ButtonBuilder().setCustomId('btn_manage_cmds').setLabel('Ativar/Desativar Cmds').setStyle(ButtonStyle.Danger).setEmoji('🚫')
+                        new ButtonBuilder().setCustomId('btn_status').setLabel('Status').setStyle(ButtonStyle.Primary),
+                        new ButtonBuilder().setCustomId('btn_manage_cmds').setLabel('Gerenciar Cmds').setStyle(ButtonStyle.Danger)
                     );
 
                     return { embeds: [embed], components: [row], flags: [MessageFlags.Ephemeral] };
@@ -46,83 +59,41 @@ module.exports = {
                 collector.on('collect', async (i) => {
                     if (i.customId === 'btn_status') {
                         const states = ['online', 'idle', 'dnd'];
-                        const current = i.client.user.presence.status;
-                        const next = states[(states.indexOf(current) + 1) % states.length];
-                        i.client.user.setPresence({ status: next });
+                        const next = states[(states.indexOf(client.user.presence.status) + 1) % states.length];
+                        client.user.setPresence({ status: next });
                         await i.update(renderPanel());
                     }
 
                     if (i.customId === 'btn_manage_cmds') {
-                        // Pegamos a lista de comandos registrados na lib
                         const options = Array.from(bot.commands.values()).map(cmd => ({
                             label: cmd.name,
-                            description: bot.disabledCommands.has(cmd.name) ? "Atualmente: DESATIVADO" : "Atualmente: ATIVO",
                             value: cmd.name,
+                            description: bot.disabledCommands.has(cmd.name) ? "Status: OFF" : "Status: ON",
                             emoji: bot.disabledCommands.has(cmd.name) ? '❌' : '✅'
                         }));
 
                         const menu = new ActionRowBuilder().addComponents(
                             new StringSelectMenuBuilder()
                                 .setCustomId('menu_cmds')
-                                .setPlaceholder('Selecione um comando para alternar o status')
-                                .addOptions(options.slice(0, 25)) // Limite do Discord
+                                .setPlaceholder('Selecione para ligar/desligar')
+                                .addOptions(options.slice(0, 25))
                         );
 
-                        await i.reply({ content: "Escolha um comando para ligar/desligar:", components: [menu], flags: [MessageFlags.Ephemeral] });
+                        await i.reply({ content: "Selecione o comando:", components: [menu], flags: [MessageFlags.Ephemeral] });
                     }
 
                     if (i.customId === 'menu_cmds') {
                         const cmdName = i.values[0];
                         if (bot.disabledCommands.has(cmdName)) {
                             bot.disabledCommands.delete(cmdName);
-                            await i.update({ content: `✅ Comando \`${cmdName}\` foi ATIVADO.`, components: [], flags: [MessageFlags.Ephemeral] });
+                            await i.update({ content: `✅ Comando \`${cmdName}\` ATIVADO.`, components: [] });
                         } else {
                             bot.disabledCommands.add(cmdName);
-                            await i.update({ content: `🚫 Comando \`${cmdName}\` foi DESATIVADO.`, components: [], flags: [MessageFlags.Ephemeral] });
+                            await i.update({ content: `🚫 Comando \`${cmdName}\` DESATIVADO.`, components: [] });
                         }
                     }
                 });
             }
         });
-
-        // IMPORTANTE: Precisamos injetar a trava no executor de comandos da lib
-        // Isso deve ser feito na parte onde o comando é disparado.
-        // Se a sua lib tiver um "bot.onInteraction", adicione:
-        // if (bot.disabledCommands.has(interaction.commandName)) return interaction.reply("Este comando está desativado.");
-    }
-};
-                        new ButtonBuilder().setCustomId('adm_cmds').setLabel('Gerenciar Cmds').setStyle(ButtonStyle.Secondary).setEmoji('🚫'),
-                        new ButtonBuilder().setCustomId('adm_temp').setLabel('Msg Temporária').setStyle(ButtonStyle.Success).setEmoji('➕')
-                    );
-
-                    return { embeds: [embed], components: [row1], flags: [MessageFlags.Ephemeral] };
-                };
-
-                const msg = await ctx.reply(renderPanel());
-                const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 300000 });
-
-                collector.on('collect', async (i) => {
-                    if (i.customId === 'adm_status') {
-                        // Exemplo: Ciclo de status (Online -> Idle -> DND)
-                        const states = ['online', 'idle', 'dnd'];
-                        const current = states.indexOf(bot.client.user.presence.status) || 0;
-                        const next = states[(current + 1) % states.length];
-                        
-                        bot.client.user.setPresence({ status: next });
-                        await i.update(renderPanel());
-                    }
-
-                    if (i.customId === 'adm_cmds') {
-                        await i.reply({ content: "Selecione o comando para desativar (Menu em desenvolvimento).", flags: [MessageFlags.Ephemeral] });
-                    }
-
-                    if (i.customId === 'adm_temp') {
-                        await i.reply({ content: "Função de injeção de mensagem temporária pendente.", flags: [MessageFlags.Ephemeral] });
-                    }
-                });
-            }
-        });
-
-        console.log("🎮 [Módulo] NDJ Control Center carregado!");
     }
 };
